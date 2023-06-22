@@ -1,0 +1,873 @@
+function Invoke-AccountExpiry {
+    <#
+    .SYNOPSIS
+        Main Function
+    .DESCRIPTION
+        Modify the values in ONLY this function, unless you're configuring functionality parameters
+    .EXAMPLE
+        $Path = Set-LoggingLocation -BaseLocation $BaseLocation
+        $ExpiringAccounts, $ExpiringAccountsNull = Get-AccountExpiry -OutputPath $Path -TargetOUs $TargetOUs -Domain $Domain -Force
+        Set-Email -SmtpServer $SmtpServer -From $From -To $To -Cc $Cc -Domain $Domain -Location $BaseLocation -ExpiringAccounts $ExpiringAccounts -NullAccounts $ExpiringAccountsNull
+    .INPUTS
+        Check functions for additional parameters to modify
+    .OUTPUTS
+        Check functions for outputs
+    .NOTES
+        Caleb Dhaliwal-McLeod - The Pearson Corporation - 02/09/2021 - V1.0 - Initial Creation
+        Caleb Dhaliwal-McLeod - The Pearson Corporation - 07/09/2021 - V1.1 - Final Draft
+    #>
+    param (
+        #################################################################################################################
+        ############################################ CHANGE THESE PARAMETERS ############################################
+        #################################################################################################################
+        # Domain
+        [Parameter()]
+        [String]
+        $Domain = "mgmt.cicz.gov.au",
+
+        # Base Logging Location
+        [Parameter()]
+        [String]
+        $BaseLocation = "\\Example\c$\PSScripts\ExpiringUsers\OutputV3\",
+
+        # Target OUs
+        [Parameter()]
+        [String[]]
+        $TargetOUs = @('OU=Example 1,OU=Example Administrators,DC=Example,DC=au'),
+
+        # Admin Inactivity Time
+        [Parameter(Mandatory = $false)]
+        [String]
+        $Duration = '45',
+
+        # Account Exclusions
+        [Parameter(Mandatory = $false)]
+        [String[]]
+        $Exclude = @("*svc*"),
+
+        # Admin Search Terms
+        [Parameter(Mandatory = $false)]
+        [String[]]
+        $AdminSearchTerms = @("*admin"),
+
+        # Admin Search Terms
+        [Parameter(Mandatory = $false)]
+        [String[]]
+        $MembershipSearchTerms = @("zzzzzzzzz"),
+
+        # Admin Search Terms
+        [Parameter(Mandatory = $false)]
+        [String[]]
+        $DisplaySearchTerms = @("*"),
+
+        # AD Properties
+        [Parameter(Mandatory = $false)]
+        [String[]]
+        $Properties = @("SamAccountName", "Enabled", "LastLogonDate", "DisplayName", "DistinguishedName", "PasswordLastSet", "AccountExpirationDate", "Pager", "Manager", "Description"),
+
+        # Pager Number
+        [Parameter(Mandatory = $false)]
+        [String]
+        $ExpiringPager = 'Expiring',
+
+        # Pager Number
+        [Parameter(Mandatory = $false)]
+        [String]
+        $NullPager = 'Null',
+
+        # Pager Number
+        [Parameter(Mandatory = $false)]
+        [String]
+        $GreaterPager = 'Greater than 12 Months',
+
+        # Pager Number
+        [Parameter(Mandatory = $false)]
+        [String]
+        $CompliantPager = 'Compliant',
+
+        # SMTP Server
+        [Parameter()]
+        [String]
+        $SmtpServer = "Example",
+
+        # Get Accounts Only
+        [Parameter(Mandatory = $false)]
+        [Switch]$OnlyAccounts
+        #################################################################################################################
+        # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ CHANGE THESE PARAMETERS ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ #
+        #################################################################################################################
+    )
+    # Start-Transcript -Path "$($BaseLocation)Logs\Log - $($Domain) - $(Get-Date -Format "dd-MM-yyyy - (hh-mm-ss)").txt"
+
+    If (!$OnlyAccounts) {
+        # $Path = Set-LoggingLocation -BaseLocation $BaseLocation
+        $ExpiringAccounts, $ExpiringAccountsNull, $GreaterAdmins = Get-AccountExpiry -OutputPath $BaseLocation -TargetOUs $TargetOUs -Domain $Domain -Duration $Duration -Exclude $Exclude -AdminSearchTerms $AdminSearchTerms -MembershipSearchTerms $MembershipSearchTerms -DisplaySearchTerms $DisplaySearchTerms -Properties $Properties -ExpiringPager $ExpiringPager -NullPager $NullPager -GreaterPager $GreaterPager -CompliantPager $CompliantPager -Force
+        Send-Email -SmtpServer $SmtpServer -Domain $Domain -Location $BaseLocation -ExpiringAccounts $ExpiringAccounts -NullAccounts $ExpiringAccountsNull -GreaterAccounts $GreaterAdmins
+    
+    }
+    elseif ($OnlyAccounts) {
+        # $Path = Set-LoggingLocation -BaseLocation $BaseLocation
+        $ExpiringAccounts, $ExpiringAccountsNull, $GreaterAdmins = Get-AccountExpiry -OutputPath $BaseLocation -TargetOUs $TargetOUs -Domain $Domain -Duration $Duration -Exclude $Exclude -AdminSearchTerms $AdminSearchTerms -MembershipSearchTerms $MembershipSearchTerms -DisplaySearchTerms $DisplaySearchTerms -Properties $Properties -ExpiringPager $ExpiringPager -NullPager $NullPager -GreaterPager $GreaterPager -CompliantPager $CompliantPager -Force -OnlyAccounts
+        Send-Email -SmtpServer $SmtpServer -Domain $Domain -Location $BaseLocation -ExpiringAccounts $ExpiringAccounts -NullAccounts $ExpiringAccountsNull -GreaterAccounts $GreaterAdmins
+
+    }
+
+    Write-Host "`n=======================" -ForegroundColor Red
+    Write-Host "=+= Script Complete =+=" -ForegroundColor Green
+    Write-Host "=======================`n" -ForegroundColor Red
+
+    #Remove-Item "$($BaseLocation)*.csv"
+    # Stop-Transcript
+}
+#################################################################################################################################################################
+# DO NOT CHANGE ANYTHING BELOW HERE UNLESS YOU ARE CHANGING THE DEFAULT FUNCTIONALITY, FOR EXAMPLE SEARCH TERMS, EXCLUSIONS, PROPERTIES AND INACTIVITY DURATION #
+#################################################################################################################################################################
+
+# function Set-LoggingLocation {
+#     <#
+#     .SYNOPSIS
+#         Set the Log Location
+#     .DESCRIPTION
+#         This function will configure the logging location, checking if the location exists and creates the location if it does not exist
+#     .EXAMPLE
+#         PS C:\> Set-LoggingLocation -BaseLocation \\share\expiring users\logging\
+#         Sets the base location to configure logging
+#     .INPUTS
+#         BaseLocation - Path to start
+#     .OUTPUTS
+#         Console output
+#         Creates folders if necessary
+#         Sends final path to next function
+#     .NOTES
+#         Caleb Dhaliwal-McLeod - The Pearson Corporation - 02/09/2021 - V1.0 - Initial Creation
+#         Caleb Dhaliwal-McLeod - The Pearson Corporation - 07/09/2021 - V1.1 - Final Draft
+#     #>
+#     param (
+#         # Base Location for Logging (Leading '\')
+#         [Parameter(Mandatory = $true)]
+#         [String]
+#         $BaseLocation
+#     )
+#     Write-Host "=================================" -ForegroundColor Cyan
+#     Write-Host "=+= Configuring Log Location =+==" -ForegroundColor Green
+#     Write-Host "=================================`n" -ForegroundColor Cyan
+
+#     $Month = Get-Date -Format 'MM'
+#     $Year = Get-Date -Format 'yyyy'
+
+#     $PathOutput = "$($BaseLocation)$($Year)\$($Month)\"
+
+#     $Years = Get-ChildItem -Path $BaseLocation -Directory | Select-Object Name, FullName
+
+#     # Checks if year folder is existing
+#     If ($Year -notin $Years.Name) {
+#         New-Item -ItemType directory -Path "$($BaseLocation)$($Year)" | Out-Null
+#         Write-Host "[+] Directory $($BaseLocation)$($Year) Created" -ForegroundColor Green
+#     }
+#     else {
+#         Write-Host "[*] Directory $($BaseLocation)$($Year) Found" -ForegroundColor Cyan
+#     }
+
+#     $Months = Get-ChildItem -Path "$($BaseLocation)$($Year)" -Directory | Select-Object Name, FullName
+
+#     # Checks if month folder is existing
+#     If ($Month -notin $Months.Name) {
+#         New-Item -ItemType directory -Path "$($BaseLocation)$($Year)\$($Month)" | Out-Null
+#         Write-Host "[+] Directory $($BaseLocation)$($Year)\$($Month) Created" -ForegroundColor Green
+#     }
+#     else {
+#         Write-Host "[*] Directory $($BaseLocation)$($Year)\$($Month) Found" -ForegroundColor Cyan
+#     }
+
+#     Return $PathOutput
+# }
+
+function Get-AccountExpiry {
+    <#
+    .SYNOPSIS
+        Finds Expiring Accounts
+    .DESCRIPTION
+        Scans Active Directory for expiring accounts
+    .EXAMPLE
+        PS C:\> Get-AccountExpiry -OutputPath $Path -Force
+        PS C:\> Get-AccountExpiry -OutputPath \\share\expiring users\logging\ -Force
+    .INPUTS
+        Domain
+        OutputPath
+        TargetOUs
+        Duration
+        Exclude
+        AdminSearchTerms
+        Properties
+        ExpiringPager
+        NullPager
+        GreaterPager
+        CompliantPager
+        Force
+    .OUTPUTS
+        Console output
+        CSV output
+        Sends expiring accounts to next function
+    .NOTES
+        Caleb Dhaliwal-McLeod - The Pearson Corporation - 02/09/2021 - V1.0 - Initial Creation
+        Caleb Dhaliwal-McLeod - The Pearson Corporation - 07/09/2021 - V1.1 - Final Draft
+    #>
+    param (
+        # Domain
+        [Parameter(Mandatory = $true)]
+        [String]
+        $Domain,
+
+        # Output Path
+        [Parameter(Mandatory = $true)]
+        [String]
+        $OutputPath,
+
+        # Target OUs
+        [Parameter(Mandatory = $true)]
+        [String[]]
+        $TargetOUs,
+
+        # Admin Inactivity Time
+        [Parameter(Mandatory = $false)]
+        [String]
+        $Duration = '60',
+
+        # Account Exclusions
+        [Parameter(Mandatory = $false)]
+       [String[]]
+        $Exclude = @("*svc*", "Admin*","*Service*"),
+
+        # Admin Search Terms
+        [Parameter(Mandatory = $false)]
+        [String[]]
+        $AdminSearchTerms = @("*T1"),
+
+        # Admin Search Terms
+        [Parameter(Mandatory = $false)]
+        [String[]]
+        $DisplaySearchTerms = @("*T1"),
+
+        # Admin Search Terms
+        [Parameter(Mandatory = $false)]
+        [String[]]
+        $MembershipSearchTerms = @("zzzzzzzzz"),
+
+        # AD Properties
+        [Parameter(Mandatory = $false)]
+        [String[]]
+        $Properties = @("SamAccountName", "Enabled", "LastLogonDate", "DisplayName", "DistinguishedName", "PasswordLastSet", "AccountExpirationDate", "Pager"),
+
+        # Pager Number
+        [Parameter(Mandatory = $false)]
+        [String]
+        $ExpiringPager = 'Expiring',
+
+        # Pager Number
+        [Parameter(Mandatory = $false)]
+        [String]
+        $NullPager = 'Null',
+
+        # Pager Number
+        [Parameter(Mandatory = $false)]
+        [String]
+        $GreaterPager = 'Greater than 12 Months',
+
+        # Pager Number
+        [Parameter(Mandatory = $false)]
+        [String]
+        $CompliantPager = 'Compliant',
+
+        # Bypass Safety Prompt
+        [Parameter(Mandatory = $false)]
+        [Switch]$Force,
+
+        # Get Accounts Only
+        [Parameter(Mandatory = $false)]
+        [Switch]$OnlyAccounts
+    )
+    Write-Host "`n=================================" -ForegroundColor Cyan
+    Write-Host "=+= Finding Expiring Accounts =+=" -ForegroundColor Green
+    Write-Host "=================================`n" -ForegroundColor Cyan
+
+    If ($OnlyAccounts) {
+        Write-Host "[!] In ONLY ACCOUNTS Mode`n" -ForegroundColor Yellow
+    }
+
+    # Find accounts in TargetOUs
+    $Accounts = @()
+    Try {
+        $Exclusion = ($Exclude | ForEach-Object { '(SamAccountName -notlike ' + "'$_')" }) -join ' -and '
+        $Inclusion = ($AdminSearchTerms | ForEach-Object { '(SamAccountName -like ' + "'$_')" }) -join ' -or '
+        $Filter = "$($Exclusion) -and ($($Inclusion))"
+
+        If ($DisplayNameSearchTerms.Length -gt 0) {
+            $DisplayNameInclusion = ($DisplayNameSearchTerms | ForEach-Object { '(DisplayName -like ' + "'$_')" }) -join ' -or '
+            $Filter = "$($Filter) -or ($($DisplayNameInclusion))"
+        }
+        Write-Host "[*] Filter Created" -ForegroundColor Cyan
+
+        Write-Host "[*] Locating Accounts`n" -ForegroundColor Cyan
+        Foreach ($OU in $TargetOUs) {
+            Write-Host "[*] Searching in $($OU)" -ForegroundColor Cyan
+            $Accounts += Get-AdUser -Filter $Filter -SearchBase $OU -Properties $Properties | Select-Object $Properties
+        }
+        Write-Host "[+] Found $($Accounts.Length) Accounts" -ForegroundColor Green
+    }
+    Catch {
+        Write-Host "[!] An Error has Occurred" -ForegroundColor Red
+        Throw $_
+    }
+
+    $CurrentDate = Get-Date
+    $Expiry = $CurrentDate.AddDays($Duration)
+
+    # Filters accounts based off AdminSearchTerms
+    Write-Host "[*] Filtering Accounts" -ForegroundColor Cyan
+    $ExpiringAdmins = @()
+    $ExpiringAdminsNull = @()
+    $GreaterAdmins = @()
+    $CompliantAdmins = @()
+
+    Foreach ($Account in $Accounts) {
+        If ((($AdminSearchTerms | ForEach-Object { $Account.SamAccountName -like $_ }) -contains $true) -or (($DisplaySearchTerms | ForEach-Object { $Account.DisplayName -like $_ }) -contains $true)) {
+            if ($null -ne $Account.AccountExpirationDate -and $Account.AccountExpirationDate -le $Expiry -and $Account -notin $ExpiringAdmins -and $Account.Pager -ne $ExpiringPager) {
+                If (!$OnlyAccounts) {
+                    Set-ADUser $Account.SamAccountName -Replace @{pager = $ExpiringPager }
+                }
+                $ExpiringAdmins += $Account
+            }
+            elseif ($null -eq $Account.AccountExpirationDate -and $Account -notin $ExpiringAdminsNull) {
+                If (!$OnlyAccounts) {
+                    Set-ADUser $Account.SamAccountName -Replace @{pager = $NullPager }
+                }
+                $ExpiringAdminsNull += $Account
+            }
+            elseif ($null -ne $Account.AccountExpirationDate -and $Account.AccountExpirationDate -gt (Get-Date).AddMonths(12)) {
+                If (!$OnlyAccounts) {
+                    Set-ADUser $Account.SamAccountName -Replace @{pager = $GreaterPager }
+                }
+                $GreaterAdmins += $Account
+            }
+            elseif ($null -ne $Account.AccountExpirationDate -and $Account.AccountExpirationDate -gt $Expiry) {
+                If (!$OnlyAccounts) {
+                    Set-ADUser $Account.SamAccountName -Replace @{pager = $CompliantPager }
+                }
+                $CompliantAdmins += $Account
+            }
+        }
+    }
+
+    Write-Host "[+] Found $($ExpiringAdmins.Length) Expiring Account(s)" -ForegroundColor Green
+    Write-Host "[+] Found $($ExpiringAdminsNull.Length) Null Expiration(s)" -ForegroundColor Green
+    Write-Host "[+] Found $($GreaterAdmins.Length) Account(s) greater than 12 Months" -ForegroundColor Green
+    Write-Host "[+] Found $($CompliantAdmins.Length) Compliant Account(s)`n" -ForegroundColor Green
+
+    # Finding Groups based on MembershipSearchTerms
+    Write-Host "`n[*] Finding Groups based on Membership Search Terms" -ForegroundColor Cyan
+    $MembershipSearchTerms_ExpiringAdmins = @()
+    $MembershipSearchTerms_ExpiringAdminsNull = @()
+    $MembershipSearchTerms_GreaterAdmins = @()
+    $MembershipSearchTerms_CompliantAdmins = @()
+
+    $Unfiltered = @()
+    $Filtered = @()
+    $AllAccounts = @()
+
+    [System.Collections.ArrayList]$Groups = $MembershipSearchTerms
+    $Wildcards = @()
+
+    Foreach ($Group in $Groups) {
+        If ([System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($Group)) {
+            $Wildcards += $Group
+        }
+    }
+
+    Foreach ($Wildcard in $Wildcards) {
+        $GroupsFound = Get-AdGroup -Filter "Name -like '$($Wildcard)'"
+
+        Foreach ($Group in $GroupsFound) {
+            $Groups += $Group.SamAccountName | Where-Object { $Group.SamAccountName -notin $Groups }
+        }
+
+        $Groups.Remove($Wildcard)
+    }
+
+    Write-Host "[+] Found $($Groups.Count) Groups" -ForegroundColor Green
+
+    # Find and Filter accounts based on MembershipSearchTerms
+    Write-Host "`n[*] Filtering Accounts based on Membership Search Terms" -ForegroundColor Cyan
+
+    Foreach ($Group in $Groups) {
+        $Members = Get-ADGroupMember $Group | Select-Object SamAccountName
+
+        Foreach ($Member in $Members) {
+            Try {
+                $Unfiltered += Get-AdUser $Member.SamAccountName -Properties $Properties | Where-Object { $_ -notin $Unfiltered } | Select-Object $Properties
+            }
+            Catch {
+                Write-Host "[!] Invalid Account: $($Member.SamAccountName)" -ForegroundColor Yellow
+            }
+        }     
+    }
+
+    $AllAccounts = @()
+    Foreach ($Account in $Unfiltered) {
+        $Valid = $true
+        Foreach ($Term in $Exclude) {
+            If ($Account.SamAccountName -like $Term) {
+                $Valid = $false
+                Break
+            }
+        }
+        If ($Valid) {
+            $AllAccounts += $Account
+        }
+    }
+
+    Foreach ($Account in $AllAccounts) {
+        Foreach ($Term in $AdminSearchTerms) {
+            If ($Account.SamAccountName -like $Term) {
+                $Filtered += $Account
+                Break
+            }
+        }
+    }
+
+    If ($DisplayNameSearchTerms.Length -gt 0) {
+        Foreach ($Account in $AllAccounts) {
+            Foreach ($Term in $DisplaySearchTerms) {
+                If ($Account.DisplayName -like $Term -and $Account -notin $Filtered) {
+                    $Filtered += $Account
+                    Break
+                }
+            }
+        }
+    }
+
+    Foreach ($Account in $Filtered) {
+        If ((($AdminSearchTerms | ForEach-Object { $Account.SamAccountName -like $_ }) -contains $true) -or (($DisplaySearchTerms | ForEach-Object { $Account.DisplayName -like $_ }) -contains $true)) {
+            if ($null -ne $Account.AccountExpirationDate -and $Account.AccountExpirationDate -le $Expiry -and $Account -notin $MembershipSearchTerms_ExpiringAdmins -and $Account.Pager -ne $ExpiringPager) {
+                If (!$OnlyAccounts) {
+                    Set-ADUser $Account.SamAccountName -Replace @{pager = $ExpiringPager }
+                }
+                $MembershipSearchTerms_ExpiringAdmins += $Account
+            }
+            elseif ($null -eq $Account.AccountExpirationDate -and $Account -notin $MembershipSearchTerms_ExpiringAdminsNull) {
+                If (!$OnlyAccounts) {
+                    Set-ADUser $Account.SamAccountName -Replace @{pager = $NullPager }
+                }
+                $MembershipSearchTerms_ExpiringAdminsNull += $Account
+            }
+            elseif ($null -ne $Account.AccountExpirationDate -and $Account.AccountExpirationDate -gt (Get-Date).AddMonths(12) -and $Account -notin $MembershipSearchTerms_GreaterAdmins) {
+                If (!$OnlyAccounts) {
+                    Set-ADUser $Account.SamAccountName -Replace @{pager = $GreaterPager }
+                }
+                $MembershipSearchTerms_GreaterAdmins += $Account
+            }
+            elseif ($null -ne $Account.AccountExpirationDate -and $Account.AccountExpirationDate -gt $Expiry -and $Account -notin $MembershipSearchTerms_CompliantAdmins) {
+                If (!$OnlyAccounts) {
+                    Set-ADUser $Account.SamAccountName -Replace @{pager = $CompliantPager }
+                }
+                MembershipSearchTerms_$CompliantAdmins += $Account
+            }
+        }
+    }
+
+    Write-Host "[+] Found $($MembershipSearchTerms_ExpiringAdmins.Length) Expiring Account(s)" -ForegroundColor Green
+    Write-Host "[+] Found $($MembershipSearchTerms_ExpiringAdminsNull.Length) Null Expiration(s)" -ForegroundColor Green
+    Write-Host "[+] Found $($MembershipSearchTerms_GreaterAdmins.Length) Account(s) greater than 12 Months" -ForegroundColor Green
+    Write-Host "[+] Found $($MembershipSearchTerms_CompliantAdmins.Length) Compliant Account(s)`n" -ForegroundColor Green
+
+    # Filter duplicates
+    Write-Host "`n[*] Removing Duplicates" -ForegroundColor Cyan
+    $TotalExpiringAdmins = @()
+    $TotalExpiringAdminsNull = @()
+    $TotalGreaterAdmins = @()
+    $TotalCompliantAdmins = @()
+
+    $TotalExpiringAdmins += $ExpiringAdmins
+    $TotalExpiringAdminsNull += $ExpiringAdminsNull
+    $TotalGreaterAdmins += $GreaterAdmins
+    $TotalCompliantAdmins += $CompliantAdmins
+
+    Foreach ($Account in $MembershipSearchTerms_ExpiringAdmins) {
+        If ($TotalExpiringAdmins.SamAccountName -notcontains $Account.SamAccountName) {
+            $TotalExpiringAdmins += $Account
+        }
+    }
+
+    Foreach ($Account in $MembershipSearchTerms_ExpiringAdminsNull) {
+        If ($TotalExpiringAdminsNull.SamAccountName -notcontains $Account.SamAccountName) {
+            $TotalExpiringAdminsNull += $Account
+        }
+    }
+
+    Foreach ($Account in $MembershipSearchTerms_GreaterAdmins) {
+        If ($TotalGreaterAdmins.SamAccountName -notcontains $Account.SamAccountName) {
+            $TotalGreaterAdmins += $Account
+        }
+    }
+
+    Foreach ($Account in $MembershipSearchTerms_CompliantAdmins) {
+        If ($TotalCompliantAdmins.SamAccountName -notcontains $Account.SamAccountName) {
+            $TotalCompliantAdmins += $Account
+        }
+    }
+
+    If ($TotalExpiringAdmins.Length -le 0) {
+        Write-Host "[!] No Expiring Admins" -ForegroundColor Red
+    }
+    else {
+        Write-Host "[+] $($TotalExpiringAdmins.Length) Expiring Admin Accounts After Filtering" -ForegroundColor Green
+    }
+
+    If ($TotalExpiringAdminsNull.Length -le 0) {
+        Write-Host "[!] No Null Admins" -ForegroundColor Red
+    }
+    else {
+        Write-Host "[+] $($TotalExpiringAdminsNull.Length) Null Admin Accounts After Filtering" -ForegroundColor Green
+    }
+
+    If ($TotalGreaterAdmins.Length -le 0) {
+        Write-Host "[!] No Greater Admins" -ForegroundColor Red
+    }
+    else {
+        Write-Host "[+] $($TotalGreaterAdmins.Length) Greater Admin Accounts After Filtering" -ForegroundColor Green
+    }
+
+    If ($TotalCompliantAdmins.Length -le 0) {
+        Write-Host "[!] No Compliant Admins" -ForegroundColor Red
+    }
+    else {
+        Write-Host "[+] $($TotalCompliantAdmins.Length) Compliant Admin Accounts After Filtering" -ForegroundColor Green
+    }
+
+    # Get group memberships
+    $FinalExpiringAdmins = @()
+    $FinalExpiringAdminsNull = @()
+    $FinalGreaterAdmins = @()
+    $FinalCompliantAdmins = @()
+    Write-Host "`n[*] Getting Group Memberships" -ForegroundColor Cyan
+
+    Foreach ($Account in $TotalExpiringAdmins) {
+        $Memberships = Get-ADPrincipalGroupMembership $Account.SamAccountName | Select-Object Name
+
+        $Result = [PSCustomObject]@{
+            SamAccountName        = $Account.SamAccountName
+            Enabled               = $Account.Enabled
+            LastLogonDate         = $Account.LastLogonDate
+            DisplayName           = $Account.DisplayName
+            DistinguishedName     = $Account.DistinguishedName
+            PasswordLastSet       = $Account.PasswordLastSet
+            AccountExpirationDate = $Account.AccountExpirationDate
+            Memberships           = $Memberships.Name -join ', '
+            Pager                 = $Account.Pager
+            Manager               = $Account.Manager
+            Description           = $Account.Description
+        }
+
+        $FinalExpiringAdmins += $Result
+    }
+
+    Foreach ($Account in $TotalExpiringAdminsNull) {
+        $Memberships = Get-ADPrincipalGroupMembership $Account.SamAccountName | Select-Object Name
+
+        $Result = [PSCustomObject]@{
+            SamAccountName        = $Account.SamAccountName
+            Enabled               = $Account.Enabled
+            LastLogonDate         = $Account.LastLogonDate
+            DisplayName           = $Account.DisplayName
+            DistinguishedName     = $Account.DistinguishedName
+            PasswordLastSet       = $Account.PasswordLastSet
+            AccountExpirationDate = $Account.AccountExpirationDate
+            Memberships           = $Memberships.Name -join ', '
+            Pager                 = $Account.Pager
+            Manager               = $Account.Manager
+            Description           = $Account.Description
+        }
+
+        $FinalExpiringAdminsNull += $Result
+    }
+
+    Foreach ($Account in $TotalGreaterAdmins) {
+        $Memberships = Get-ADPrincipalGroupMembership $Account.SamAccountName | Select-Object Name
+
+        $Result = [PSCustomObject]@{
+            SamAccountName        = $Account.SamAccountName
+            Enabled               = $Account.Enabled
+            LastLogonDate         = $Account.LastLogonDate
+            DisplayName           = $Account.DisplayName
+            DistinguishedName     = $Account.DistinguishedName
+            PasswordLastSet       = $Account.PasswordLastSet
+            AccountExpirationDate = $Account.AccountExpirationDate
+            Memberships           = $Memberships.Name -join ', '
+            Pager                 = $Account.Pager
+            Manager               = $Account.Manager
+            Description           = $Account.Description
+        }
+
+        $FinalGreaterAdmins += $Result
+    }
+
+    Foreach ($Account in $TotalCompliantAdmins) {
+        $Memberships = Get-ADPrincipalGroupMembership $Account.SamAccountName | Select-Object Name
+
+        $Result = [PSCustomObject]@{
+            SamAccountName        = $Account.SamAccountName
+            Enabled               = $Account.Enabled
+            LastLogonDate         = $Account.LastLogonDate
+            DisplayName           = $Account.DisplayName
+            DistinguishedName     = $Account.DistinguishedName
+            PasswordLastSet       = $Account.PasswordLastSet
+            AccountExpirationDate = $Account.AccountExpirationDate
+            Memberships           = $Memberships.Name -join ', '
+            Pager                 = $Account.Pager
+            Manager               = $Account.Manager
+            Description           = $Account.Description
+        }
+
+        $FinalCompliantAdmins += $Result
+    }
+
+    # Export accounts
+    Write-Host "`n[*] Exporting" -ForegroundColor Cyan
+    Try {
+        If ($FinalExpiringAdmins.Length -gt 0) {
+            $TotalExportPath = "$($OutputPath)ExpiringAdmins - $($Domain) - $(Get-Date -Format "dd-MM-yyyy - (hh-mm-ss)").csv"
+            $FinalExpiringAdmins | Export-Csv -Path $TotalExportPath -NoTypeInformation
+            Write-Host "[+] File exported to: $($TotalExportPath)" -ForegroundColor Green
+        }
+        else {
+            Write-Host "[!] No Expiring Admins Found" -ForegroundColor Red
+        }
+    }
+    Catch {
+        Write-Host "[!] Export Error has Occurred" -ForegroundColor Red
+        Throw $_
+    }
+
+    Try {
+        If ($FinalExpiringAdminsNull.Length -gt 0) {
+            $TotalExportPath = "$($OutputPath)NullAdmins - $($Domain) - $(Get-Date -Format "dd-MM-yyyy - (hh-mm-ss)").csv"
+            $FinalExpiringAdminsNull | Export-Csv -Path $TotalExportPath -NoTypeInformation
+            Write-Host "[+] File exported to: $($TotalExportPath)" -ForegroundColor Green
+        }
+        else {
+            Write-Host "[!] No Null Admins Found" -ForegroundColor Red
+        }
+    }
+    Catch {
+        Write-Host "[!] Export Error has Occurred" -ForegroundColor Red
+        Throw $_
+    }
+
+    Try {
+        If ($FinalGreaterAdmins.Length -gt 0) {
+            $TotalExportPath = "$($OutputPath)GreaterAdmins - $($Domain) - $(Get-Date -Format "dd-MM-yyyy - (hh-mm-ss)").csv"
+            $FinalGreaterAdmins | Export-Csv -Path $TotalExportPath -NoTypeInformation
+            Write-Host "[+] File exported to: $($TotalExportPath)" -ForegroundColor Green
+        }
+        else {
+            Write-Host "[!] No Greater Admins Found" -ForegroundColor Red
+        }
+    }
+    Catch {
+        Write-Host "[!] Export Error has Occurred" -ForegroundColor Red
+        Throw $_
+    }
+
+    Try {
+        If ($FinalCompliantAdmins.Length -gt 0) {
+            $TotalExportPath = "$($OutputPath)CompliantAdmins - $($Domain) - $(Get-Date -Format "dd-MM-yyyy - (hh-mm-ss)").csv"
+            $FinalCompliantAdmins | Export-Csv -Path $TotalExportPath -NoTypeInformation
+            Write-Host "[+] File exported to: $($TotalExportPath)" -ForegroundColor Green
+        }
+        else {
+            Write-Host "[!] No Compliant Admins Found" -ForegroundColor Red
+        }
+    }
+    Catch {
+        Write-Host "[!] Export Error has Occurred" -ForegroundColor Red
+        Throw $_
+    }
+
+    Return $FinalExpiringAdmins, $FinalExpiringAdminsNull, $FinalGreaterAdmins
+}
+
+function Send-Email {
+    param (
+        # Domain
+        [Parameter(Mandatory = $true)]
+        [String]
+        $Domain,
+
+        # Expiring Accounts
+        [Parameter(Mandatory = $true)]
+        $ExpiringAccounts,
+
+        # Null Accounts
+        [Parameter(Mandatory = $true)]
+        $NullAccounts,
+
+        # Null Accounts
+        [Parameter(Mandatory = $true)]
+        $GreaterAccounts,
+
+        # Log Location
+        [Parameter(Mandatory = $true)]
+        $Location,
+
+        # SMTP Server
+        [Parameter(Mandatory = $true)]
+        [String]
+        $SmtpServer,
+        
+        # SMTP Port
+        [Parameter(Mandatory = $false)]
+        [Int]
+        $SmtpServerPort = 25
+
+
+    )
+    Write-Host "`n==================================" -ForegroundColor Cyan
+    Write-Host "=+= Emailing Expiring Accounts =+=" -ForegroundColor Green
+    Write-Host "==================================`n" -ForegroundColor Cyan
+
+    Foreach ($Account in $ExpiringAccounts) {
+        
+        # v-----------Change----------v
+        $To = "Timothy.Crofts@Example.gov.au" #"$($Account.SamAccountName)@Example.gov.au" #Emails each user directly
+        $From = "ExpiringAdmins@Example.gov.au"
+        $CC = "timothy.crofts@Example.gov.au"
+        # ^-----------Change----------^
+
+        $Subject = "Account set to expire within 2 Months - T1 $($Account.SamAccountName) - $($Domain) - $(Get-Date)" 
+
+        #If Group Membership does not output correctly in the body of email comment out the line below and replace the 'Group Membership' variable to $($Account.MemberOf) (9 lines below)
+        $Memberships = Get-ADPrincipalGroupMembership $Account.SamAccountName | Select-Object Name
+
+        $Body = @"
+Dear Service Desk,
+
+The following account is expiring in 2 Months:
+Username: $($Account.SamAccountName)
+Display Name: $($Account.DisplayName)
+Group Membership: $($Memberships.name -join ',')
+Description: $($Account.Description)
+
+
+Regards,
+Account Expiry Script
+"@
+
+        #$Attachments = (get-childitem $Location).fullname
+        #$Attachments
+        Write-Host "Smtp Config: $($SmtpServer):$($SmtpServerPort)`n" -ForegroundColor Green
+        Write-Host "To: $($To)" -ForegroundColor Cyan
+        Write-Host "From: $($From)" -ForegroundColor Cyan
+        Write-Host "Cc: $($Cc)" -ForegroundColor Cyan
+        Write-Host "`nSubject: $($Subject)" -ForegroundColor Green
+    
+        Try {
+            #Send-MailMessage -To $To -From $From -Cc $Cc -Subject $Subject -Body $Body -SmtpServer $SmtpServer -Port $SmtpServerPort -Priority High -DeliveryNotificationOption OnSuccess, OnFailure -ErrorAction Stop #-Attachments $Attachments
+        }
+        Catch {
+            Write-Host "[!] Export Error has Occurred" -ForegroundColor Red
+            Throw $_
+        }
+        
+    }
+
+    Foreach ($Account in $NullAccounts) {
+
+        # v-----------Change----------v
+        $To = "ryan.williams@Example.gov.au" #"$($Account.SamAccountName)@Example.gov.au" #Emails each user directly
+        $From = "ExpiringAdmins@Example.gov.au"
+        $CC = "Timothy.Crofts@Example.gov.au"
+        # ^-----------Change----------^
+        
+        #If Group Membership does not output correctly in the body of email comment out the line below and replace the 'Group Membership' variable to $($Account.MemberOf) (9 lines below)
+        $Memberships = Get-ADPrincipalGroupMembership $Account.SamAccountName | Select-Object Name
+
+        $Subject = "Account set to never expire - T1 $($Account.SamAccountName) - $($Domain) - $(Get-Date)" 
+        $Body = @"
+Dear Service Desk,
+
+The following account has no Account Expiration Date:
+Username: $($Account.SamAccountName)
+Display Name: $($Account.DisplayName)
+Group Membership: $($Memberships.name -join ',')
+Description: $($Account.Description)
+
+
+Regards,
+Account Expiry Script
+"@
+
+        #$Attachments = (get-childitem $Location).fullname
+        #$Attachments
+        Write-Host "Smtp Config: $($SmtpServer):$($SmtpServerPort)`n" -ForegroundColor Green
+        Write-Host "To: $($To)" -ForegroundColor Cyan
+        Write-Host "From: $($From)" -ForegroundColor Cyan
+        Write-Host "Cc: $($Cc)" -ForegroundColor Cyan
+        Write-Host "`nSubject: $($Subject)" -ForegroundColor Green
+    
+        Try {
+            Send-MailMessage -To $To -From $From -Cc $Cc -Subject $Subject -Body $Body -SmtpServer $SmtpServer -Port $SmtpServerPort -Priority High -DeliveryNotificationOption OnSuccess, OnFailure -ErrorAction Stop #-Attachments $Attachments
+        }
+        Catch {
+            Write-Host "[!] Export Error has Occurred" -ForegroundColor Red
+            Throw $_
+        }
+        
+    }
+
+    Foreach ($Account in $GreaterAccounts) {
+        
+        # v-----------Change----------v
+        $To = "ryan.williams@Example.gov.au" #"$($Account.SamAccountName)@Example.gov.au" #Emails each user directly
+        $From = "ExpiringAdmins@Example.gov.au"
+        $CC = "Timothy.Crofts@Example.gov.au"
+        # ^-----------Change----------^
+
+
+        #If Group Membership does not output correctly in the body of email comment out the line below and replace the 'Group Membership' variable to $($Account.MemberOf) (9 lines below)
+        $Memberships = Get-ADPrincipalGroupMembership $Account.SamAccountName | Select-Object Name
+
+        $Subject = "Account set to expire > 12 months - T1 $($Account.SamAccountName) - $($Domain) - $(Get-Date)" 
+        $Body = @"
+Dear Service Desk,
+
+The following account has an Account Expiration Date greater than 12 months:
+Username: $($Account.SamAccountName)
+Display Name: $($Account.DisplayName)
+Group Membership: $($Memberships.name -join ',')
+Description: $($Account.Description)
+
+
+Regards,
+Account Expiry Script
+"@
+
+        #$Attachments = (get-childitem $Location).fullname
+        #$Attachments
+        Write-Host "Smtp Config: $($SmtpServer):$($SmtpServerPort)`n" -ForegroundColor Green
+        Write-Host "To: $($To)" -ForegroundColor Cyan
+        Write-Host "From: $($From)" -ForegroundColor Cyan
+        Write-Host "Cc: $($Cc)" -ForegroundColor Cyan
+        Write-Host "`nSubject: $($Subject)" -ForegroundColor Green
+    
+        Try {
+            Send-MailMessage -To $To -From $From -Cc $Cc -Subject $Subject -Body $Body -SmtpServer $SmtpServer -Port $SmtpServerPort -Priority High -DeliveryNotificationOption OnSuccess, OnFailure -ErrorAction Stop #-Attachments $Attachments
+        }
+        Catch {
+            Write-Host "[!] Export Error has Occurred" -ForegroundColor Red
+            Throw $_
+        }
+        
+    }
+
+    Write-Host "`n[+] Expiring accounts have been sent to $($To)" -ForegroundColor Green
+}
+Invoke-AccountExpiry -OnlyAccounts
